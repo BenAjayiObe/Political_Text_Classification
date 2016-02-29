@@ -1,6 +1,9 @@
 import numpy as np
 import kernel
-import cvxopt
+import cvxopt.solvers
+
+
+MIN_SUPPORT_VECTOR_MULTIPLIER = 1e-5
 
 
 class SVMTrainer:
@@ -8,6 +11,13 @@ class SVMTrainer:
 	def __init__ (self, kernel, c):
 		self.kernel = kernel
 		self._c = c
+
+	def train(self, X, y):
+		"""Given the training features X with labels y, returns a SVM
+		predictor representing the trained SVM.
+		"""
+		lagrange_multipliers = self._compute_multipliers(X, y)
+		return self._construct_predictor(X, y, lagrange_multipliers)
 
 	def gram_matrix(self, X):
 		n_samples, n_features = X.shape
@@ -53,19 +63,89 @@ class SVMTrainer:
 		# Lagrange multipliers
 		return np.ravel(solution['x'])
 
+	def _construct_predictor(self, X, y, lagrange_multipliers):
+
+		support_vector_indices = lagrange_multipliers > MIN_SUPPORT_VECTOR_MULTIPLIER
+
+		support_multipliers = lagrange_multipliers[support_vector_indices]
+		support_vectors = X[support_vector_indices]
+		support_vector_labels = y[support_vector_indices]
+
+		# http://www.cs.cmu.edu/~guestrin/Class/10701-S07/Slides/kernels.pdf
+		# bias = y_k - \sum z_i y_i  K(x_k, x_i)
+		# Thus we can just predict an example with bias of zero, and
+		# compute error.
+		bias = np.mean(
+			[y_k - SVMPredictor(
+				kernel=self.kernel,
+				bias=0.0,
+				weights=support_multipliers,
+				support_vectors=support_vectors,
+				support_vector_labels=support_vector_labels).predict(x_k)
+			for (y_k, x_k) in zip(support_vector_labels, support_vectors)])
+
+		return SVMPredictor(
+			kernel=self.kernel,
+			bias=bias,
+			weights=support_multipliers,
+			support_vectors=support_vectors,
+			support_vector_labels=support_vector_labels)
+
+
+
+class SVMPredictor(object):
+	def __init__(self,
+				kernel,
+				bias,
+				weights,
+				support_vectors,
+				support_vector_labels):
+		self.kernel = kernel
+		self._bias = bias
+		self._weights = weights
+		self._support_vectors = support_vectors
+		self._support_vector_labels = support_vector_labels
+		assert len(support_vectors) == len(support_vector_labels)
+		assert len(weights) == len(support_vector_labels)
+		#logging.info("Bias: %s", self._bias)
+		#logging.info("Weights: %s", self._weights)
+		#logging.info("Support vectors: %s", self._support_vectors)
+		#logging.info("Support vector labels: %s", self._support_vector_labels)
+
+	def predict(self, x):
+		"""
+		Computes the SVM prediction on the given features x.
+		"""
+		result = self._bias
+		for z_i, x_i, y_i in zip(self._weights,
+				self._support_vectors,
+				self._support_vector_labels):
+			result += z_i * y_i * self.kernel(x_i, x)
+		return np.sign(result).item()
+
+
+def example(num_samples,num_features):
+	samples = np.matrix(np.random.normal(size=num_samples * num_features).reshape(num_samples, num_features))
+	labels = 2 * (samples.sum(axis=1) > 0) - 1.0
+	print "SAMPLE\n"
+	print samples
+	print "\n"
+	print "LABELS\n"
+	print labels
+	print "\n"
+	trainer = SVMTrainer(kernel.Kernel.linear(), 0.1)
+	predictor = trainer.train(samples, labels)
+
+	print predictor.predict([0.5,-1.3])
 
 def main():
-
-	SVM = SVMTrainer(kernel.Kernel.linear(),7)
-
-	X = np.ones((5,5))
-	print SVM.gram_matrix(X)
-	Y = np.ones((5,5))
-	print SVM._compute_multipliers(Y,5)
+	num_samples=100
+	num_features=2
+	example(num_samples, num_features)
 
 
 if __name__ == "__main__":
-    main()
+	main()
 
 
 #TODO: Figure out how to enter Kernel  
